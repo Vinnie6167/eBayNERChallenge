@@ -25,7 +25,7 @@ class AspectDataset(Dataset):
 
 
 class NERModel(nn.Module):
-    def __init__(self, glove, rnn_dim, rnn_layers, vocab, num_aspects):
+    def __init__(self, glove, rnn_dim, rnn_layers, vocab, word2idx, num_aspects):
 
         super(NERModel, self).__init__()
 
@@ -79,10 +79,18 @@ class NERModel(nn.Module):
         return preds
 
 
-def train(train_dataloader, val_dataloader, model, loss_fn, optimizer, metric, num_epochs, trainloss, val_loss_l, trainaccuracy, val_accuracy_l, score_l):
+def train(model, num_epochs, train_dataloader, val_dataloader, loss_fn, optimizer):
+    
+    train_accs = []
+    test_accs = []
+    f1scores = []
+
     for epoch in range(num_epochs):
+        
         print(f"=== Epoch {epoch} ===")
-        for batch, (X, y) in enumerate(train_dataloader):
+
+        # Train
+        for X, y in train_dataloader:
             # Compute prediction and loss
             logits = model(X)
             loss = loss_fn(logits, y)
@@ -92,13 +100,10 @@ def train(train_dataloader, val_dataloader, model, loss_fn, optimizer, metric, n
             loss.backward()
             optimizer.step()
 
-        # Compute loss and accuracy on entire dataset
+        # Train Loss and Accuracy
         train_loss, correct = 0, 0
-
         with torch.no_grad():
-            count = 0
             for X, y in train_dataloader:
-                count += 1
                 logits = model(X)
                 train_loss += loss_fn(logits, y).item()
                 correct += (logits.argmax(1) == y).type(torch.float).sum().item()
@@ -107,27 +112,39 @@ def train(train_dataloader, val_dataloader, model, loss_fn, optimizer, metric, n
         correct /= len(train_dataloader.dataset)
         trainloss.append(train_loss)
         trainaccuracy.append(correct)
+
         print(f"Train Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {train_loss:>8f} \n")
         
-        val_loss, correct, score = 0, 0, 0
-
+        # Test Loss and Accuracy
+        val_loss, correct = 0, 0
         with torch.no_grad():
-            count = 0
             for X, y in val_dataloader:
-                count += 1
                 logits = model(X)
-                score += metric(logits, y).item()
                 val_loss += loss_fn(logits, y).item()
                 correct += (logits.argmax(1) == y).type(torch.float).sum().item()
 
         val_loss /= len(val_dataloader)
         correct /= len(val_dataloader.dataset)
-        score /= len(val_dataloader)
         val_loss_l.append(val_loss)
         val_accuracy_l.append(correct)
-        score_l.append(score)
+
         print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {val_loss:>8f} \n")
-        print("F1 Score: ", score)
+
+
+def f1score(model, val_dataloader):
+
+    f1scorer = torchmetrics.classification.MulticlassF1Score(num_classes = len(dict2), average="weighted")
+
+    score = 0
+
+    with torch.no_grad():
+        for X, y in val_dataloader:
+            logits = model(X)
+            score += metric(logits, y).item()
+    
+    score /= len(val_dataloader)
+
+    return score
 
 
 def main():
@@ -138,75 +155,61 @@ def main():
     word2idx = pickle.load(open('glove_data/6B.50_idx.pkl', 'rb'))
     glove = {w: torch.from_numpy(vectors[word2idx[w]]) for w in words}
 
-    # Create data loaders.
+    # Load data
     data = pd.read_csv(DATASET_ADDRESS, compression='gzip', header=0, sep = '\t', on_bad_lines='skip')
 
+    # Construct Dataset
+    # (num_samples, max_len)
+
     # Build string 2 int and int 2 string mappings
-    data['Tag'].fillna(method='ffill', inplace=True)
-    d =  data["Token"].tolist()
+    # data['Tag'].fillna(method='ffill', inplace=True) # TODO: Remove
+    # vocab = np.unique(np.array(data["Token"].tolist()))
+    # tags = np.unique(np.array(data["Tag"].tolist()))
 
-    tags = data["Tag"].tolist()
-    d1 = np.array(d)
+    # Split data into train and test
+    # msk = np.random.rand(len(data)) < 0.7
+    # train_data = data[msk]
+    # val_data = data[~msk]
+    # train_data.reset_index(inplace=True, drop=True)
+    # val_data.reset_index(inplace=True, drop=True)
+    # train_data = AspectDataset(train_data, dict1, dict2)
+    # val_data = AspectDataset(val_data, dict1, dict2)
 
-    d1 = np.delete(d1, np.where(d1 == 'The'))
-    d1 = np.delete(d1, np.where(d1 == 'the'))
-    d1 = np.delete(d1, np.where(d1 == 'a'))
-    d1 = np.delete(d1, np.where(d1 == 'an'))
-
-    d2 = np.array(tags)
-    d1 = np.char.lower(d1)
-    d2 = np.char.lower(d2)
-    unique_d1 = np.unique(d1)
-    unique_d2 = np.unique(d2)
-    d1 = unique_d1.tolist()
-    d2 = unique_d2.tolist()
-    dict1 = {k: v for v, k in enumerate(d1)}
-    dict2 = {k: v for v, k in enumerate(d2)}
-
-    msk = np.random.rand(len(data)) < 0.7
-    train_data = data[msk]
-    val_data = data[~msk]
-    train_data.reset_index(inplace=True, drop=True)
-    val_data.reset_index(inplace=True, drop=True)
-    train_data = AspectDataset(train_data, dict1, dict2)
-    val_data = AspectDataset(val_data, dict1, dict2)
-
-    train_dataloader = DataLoader(train_data, batch_size=64, shuffle=True)
-    val_dataloader = DataLoader(val_data, batch_size=64, shuffle=True)
+    # train_dataloader = DataLoader(train_data, batch_size=64, shuffle=True)
+    # val_dataloader = DataLoader(val_data, batch_size=64, shuffle=True)
     
-    # Get vocabulary size
+    # # Get vocabulary size
 
-    target_vocab = list(d1)
+    # target_vocab = list(d1)
 
-    model = Model(vocab_size=len(dict1), embedding_dim=50, num_aspects=len(dict2), hidden_dim=64, n_layers=2, glove=glove, target_vocab=target_vocab)
-    loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-1)
-    metric = torchmetrics.classification.MulticlassF1Score(num_classes = len(dict2), average="weighted")
-    epochs = 100
-    trainloss = []
-    val_loss = []
-    trainaccuracy = []
-    val_accuracy = []
-    f1score = []
-    xlabel = list(range(0,epochs))
-    train(train_dataloader, val_dataloader, model, loss_fn, optimizer, metric, epochs, trainloss, val_loss, trainaccuracy, val_accuracy, f1score)
+    # model = Model(vocab_size=len(dict1), embedding_dim=50, num_aspects=len(dict2), hidden_dim=64, n_layers=2, glove=glove, target_vocab=target_vocab)
+    # loss_fn = nn.CrossEntropyLoss()
+    # optimizer = torch.optim.SGD(model.parameters(), lr=1e-1)
+    # epochs = 100
+    # trainloss = []
+    # val_loss = []
+    # trainaccuracy = []
+    # val_accuracy = []
+    # f1score = []
+    # xlabel = list(range(0,epochs))
+    # train(train_dataloader, val_dataloader, model, loss_fn, optimizer, metric, epochs, trainloss, val_loss, trainaccuracy, val_accuracy, f1score)
 
-    plt.plot(np.array(xlabel), np.array(trainloss), label='Train Loss')
-    plt.plot(np.array(xlabel), np.array(val_loss), label='Test Loss')
-    plt.title('Loss')
-    plt.legend()
-    plt.show()
+    # plt.plot(np.array(xlabel), np.array(trainloss), label='Train Loss')
+    # plt.plot(np.array(xlabel), np.array(val_loss), label='Test Loss')
+    # plt.title('Loss')
+    # plt.legend()
+    # plt.show()
 
-    plt.plot(np.array(xlabel), np.array(trainaccuracy), label='Train Accuracy')
-    plt.plot(np.array(xlabel), np.array(val_accuracy), label='Test Accuracy')
-    plt.title('Accuracy')
-    plt.legend()
-    plt.show()
+    # plt.plot(np.array(xlabel), np.array(trainaccuracy), label='Train Accuracy')
+    # plt.plot(np.array(xlabel), np.array(val_accuracy), label='Test Accuracy')
+    # plt.title('Accuracy')
+    # plt.legend()
+    # plt.show()
 
-    plt.plot(np.array(xlabel), np.array(f1score))
-    plt.title('F1 Score')
-    plt.legend()
-    plt.show()
+    # plt.plot(np.array(xlabel), np.array(f1score))
+    # plt.title('F1 Score')
+    # plt.legend()
+    # plt.show()
 
 if __name__ == "__main__":
     main()
