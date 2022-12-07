@@ -1,0 +1,10 @@
+# Challenge Set
+dataset/Listing_Titles.tsv.gz
+
+# Txt Embeddings from Glove
+glove_data/*.txt
+
+# Embedding Formatter
+glove_temp.py
+
+__pycache__
