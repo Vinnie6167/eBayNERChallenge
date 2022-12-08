@@ -42,13 +42,13 @@ def pad_batch(batch):
     for i, x in enumerate(xx):
         xx_pad[i, 0:x_lens[i]] = x
 
-    yy_pad = pad_sequence(yy, batch_first=True, padding_value=-1)
+    yy_pad = pad_sequence(yy, batch_first=True, padding_value=2^32)
 
     return xx_pad, yy_pad, x_lens, y_lens
 
 
 class NERModel(nn.Module):
-    def __init__(self, glove, rnn_dim, rnn_layers, vocab, word2idx, num_aspects):
+    def __init__(self, glove, rnn_dim, rnn_layers, vocab, num_aspects):
 
         super(NERModel, self).__init__()
 
@@ -99,9 +99,9 @@ class NERModel(nn.Module):
         return logits
     
     def predict(self, words):
-
-        logits = self.forward(words)
-        preds = logits.argmax(1)
+        words = words.int()
+        logits = self.forward(words[None, :])
+        preds = logits.argmax(2)
         
         return preds
 
@@ -166,23 +166,32 @@ def train(model, num_epochs, train_dataloader, test_dataloader, loss_fn, optimiz
 
         print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
     
-    return train_loss, train_accs, test_loss, test_accs
+    return train_losses, train_accs, test_losses, test_accs
 
 
-def f1score(model, val_dataloader):
+def f1score(model, test_dataloader, weighted):
 
-    f1scorer = torchmetrics.classification.MulticlassF1Score(num_classes = len(model.getNumAspects()), average="weighted")
+    if weighted:
+        f1scorer = torchmetrics.classification.MulticlassF1Score(num_classes=model.num_aspects, average=None, ignore_index=2^32)
+    else:
+        f1scorer = torchmetrics.classification.MulticlassF1Score(num_classes=model.num_aspects, average="weighted", ignore_index=2^32)
 
     score = 0
 
     with torch.no_grad():
-        for X, y in val_dataloader:
+        for X, y, _, _ in test_dataloader:
+            X = X.int()
+
             logits = model(X)
-            score += f1scorer(logits, y).item()
+            preds = logits.argmax(2)
+            preds = preds.reshape((-1))
+            y = y.reshape((-1))
+            score += f1scorer(preds, y)
     
-    score /= len(val_dataloader)
+    score /= len(test_dataloader)
 
     return score
+
 
 def main():
 
@@ -206,15 +215,15 @@ def main():
     aspects = np.unique(np.array(df["Tag"].tolist()))
     num_aspects = aspects.shape[0]
     word2idx = {k : v for v, k in enumerate(vocab)}
-    # idx2word = {k : v for k, v in enumerate(vocab)}
+    idx2word = {k : v for k, v in enumerate(vocab)}
     aspect2idx = {k : v for v, k in enumerate(aspects)}
-    # idx2aspect = {k : v for k, v in enumerate(aspects)}
+    idx2aspect = {k : v for k, v in enumerate(aspects)}
 
     # Divide into test and train dataset
     random.shuffle(titles)
     num_titles = len(titles)
-    train_titles = titles[:int(num_titles*0.7)]
-    test_titles = titles[int(num_titles*0.7):]
+    train_titles = titles[:int(num_titles*0.9)]
+    test_titles = titles[int(num_titles*0.9):]
     train_dataset = AspectDataset(train_titles, word2idx, aspect2idx)
     test_dataset = AspectDataset(test_titles, word2idx, aspect2idx)
     train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=pad_batch)
@@ -226,31 +235,62 @@ def main():
     word2idx = pickle.load(open('glove_data/6B.50_idx.pkl', 'rb'))
     glove = {w: torch.from_numpy(vectors[word2idx[w]]) for w in words}
 
-    # Model, Optimizer, Loss Function
-    model = NERModel(glove, 25, 2, vocab, word2idx, num_aspects)
-    loss_fn = nn.CrossEntropyLoss(ignore_index=-1)
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-1)
+    
 
-    # Train Loop
-    train_loss, train_accs, test_loss, test_accs = train(model, 50, train_dataloader, test_dataloader, loss_fn, optimizer)
+    # rnn_dim, rnn_layers, lr
+    # configs = [(25, 1, 1e-2), (50, 1, 1e-2), (25, 2, 1e-2), (50, 2, 1e-2), (25, 4, 1e-2), (50, 4, 1e-2), (25, 6, 1e-2), (50, 6, 1e-2)]
+    configs = [(25, 4, 1e-2), (50, 4, 1e-2), (25, 6, 1e-2), (50, 6, 1e-2)]
+    num_epochs = 200
 
+    for config in configs:
+        rnn_dim, rnn_layers, lr = config
 
-    # plt.plot(np.array(xlabel), np.array(trainloss), label='Train Loss')
-    # plt.plot(np.array(xlabel), np.array(val_loss), label='Test Loss')
-    # plt.title('Loss')
-    # plt.legend()
-    # plt.show()
+        # Model, Optimizer, Loss Function
+        model = NERModel(glove, rnn_dim, rnn_layers, vocab, num_aspects)
+        loss_fn = nn.CrossEntropyLoss(ignore_index=2^32)
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
-    # plt.plot(np.array(xlabel), np.array(trainaccuracy), label='Train Accuracy')
-    # plt.plot(np.array(xlabel), np.array(val_accuracy), label='Test Accuracy')
-    # plt.title('Accuracy')
-    # plt.legend()
-    # plt.show()
+        # Train Loop
+        train_loss, train_accs, test_loss, test_accs = train(model, num_epochs, train_dataloader, test_dataloader, loss_fn, optimizer)
 
-    # plt.plot(np.array(xlabel), np.array(f1score))
-    # plt.title('F1 Score')
-    # plt.legend()
-    # plt.show()
+        f1_weighted = f1score(model, test_dataloader, True)
+        f1_cats = f1score(model, test_dataloader, False)
+
+        xlabel = list(range(1,num_epochs+1))
+
+        plt.plot(np.array(xlabel), np.array(train_loss), label='Train Loss')
+        plt.plot(np.array(xlabel), np.array(test_loss), label='Test Loss')
+        plt.title("Loss Plot")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.savefig(f"loss_{rnn_dim}_{rnn_layers}_{lr}.png")
+        plt.clf()
+
+        plt.plot(np.array(xlabel), np.array(train_accs), label='Train Accuracy')
+        plt.plot(np.array(xlabel), np.array(test_accs), label='Test Accuracy')
+        plt.title('Accuracy Plot')
+        plt.xlabel("Epoch")
+        plt.ylabel("Accuracy")
+        plt.legend()
+        plt.savefig(f"accuracy_{rnn_dim}_{rnn_layers}_{lr}.png")
+        plt.clf()
+        
+        model_d = {
+            "model": model,
+            "rnn_dim": rnn_dim,
+            "rnn_layers": rnn_layers,
+            "lr": lr,
+            "train_loss": train_loss,
+            "train_accs": train_accs,
+            "test_loss": test_loss,
+            "test_accs": test_accs,
+            "f1_weighted": f1_weighted,
+            "f1_cats": f1_cats
+        }
+
+        # Save model
+        pickle.dump(model_d, open(f'model_{rnn_dim}_{rnn_layers}_{lr}.pkl', 'wb'))
 
 if __name__ == "__main__":
     main()
