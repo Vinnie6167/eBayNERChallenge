@@ -8,3 +8,6 @@ glove_data/*.txt
 glove_temp.py
 
 __pycache__
+
+*.pkl
+*.png

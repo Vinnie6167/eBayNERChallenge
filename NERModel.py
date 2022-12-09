@@ -72,15 +72,15 @@ class NERModel(nn.Module):
 
         # Initializing Embedding Layer
         self.embedding_layer = nn.Embedding(vocab_size, emb_dim)
-        self.embedding_layer.load_state_dict({'weight': emb_matrix})
+        # self.embedding_layer.load_state_dict({'weight': emb_matrix})
 
         # Initializing RNN Layer
-        dropout = 0.5 if rnn_layers > 1 else 0
+        # dropout = 0.5 if rnn_layers > 1 else 0
         # self.rnn = nn.RNN(emb_dim, rnn_dim, rnn_layers, batch_first=True, dropout=dropout, bidirectional=True)
-        self.rnn = nn.LSTM(input_size=emb_dim, hidden_size=rnn_dim, num_layers=rnn_layers, batch_first=True, bidirectional=True, dropout=dropout)
+        # self.rnn = nn.LSTM(input_size=emb_dim, hidden_size=rnn_dim, num_layers=rnn_layers, batch_first=True, bidirectional=True, dropout=dropout)
 
         # Initializing Linear Layer
-        self.linear_layer = nn.Linear(rnn_dim * 2, num_aspects)
+        self.linear_layer = nn.Linear(emb_dim, num_aspects)
 
     def forward(self, words):
 
@@ -88,12 +88,12 @@ class NERModel(nn.Module):
         emb_out = self.embedding_layer(words)
 
         # Apply RNN Layer
-        rnn_out, _ = self.rnn(emb_out)
+        # rnn_out, _ = self.rnn(emb_out)
 
         # Apply Linear Layer
-        batch_size, max_len, hidden_dim = rnn_out.shape
-        rnn_out = rnn_out.reshape((-1, hidden_dim))
-        logits = self.linear_layer(rnn_out)
+        batch_size, max_len, _ = emb_out.shape
+        # rnn_out = rnn_out.reshape((-1, hidden_dim))
+        logits = self.linear_layer(emb_out)
         logits = logits.reshape((batch_size, max_len, self.num_aspects))
 
         return logits
@@ -238,9 +238,8 @@ def main():
     
 
     # rnn_dim, rnn_layers, lr
-    # configs = [(25, 1, 1e-2), (50, 1, 1e-2), (25, 2, 1e-2), (50, 2, 1e-2), (25, 4, 1e-2), (50, 4, 1e-2), (25, 6, 1e-2), (50, 6, 1e-2)]
-    configs = [(25, 4, 1e-2), (50, 4, 1e-2), (25, 6, 1e-2), (50, 6, 1e-2)]
-    num_epochs = 200
+    configs = [(25, 1, 1e-2), (50, 2, 0.5), (50, 6, 2), (25, 4, 1e-2), (50, 4, 1e-2), (25, 6, 1e-2), (50, 6, 1e-2)]
+    num_epochs = 100
 
     for config in configs:
         rnn_dim, rnn_layers, lr = config
@@ -258,22 +257,22 @@ def main():
 
         xlabel = list(range(1,num_epochs+1))
 
-        plt.plot(np.array(xlabel), np.array(train_loss), label='Train Loss')
-        plt.plot(np.array(xlabel), np.array(test_loss), label='Test Loss')
-        plt.title("Loss Plot")
+        plt.plot(np.array(xlabel), np.array(model_d["train_loss"]), label='Train Loss')
+        plt.plot(np.array(xlabel), np.array(model_d["test_loss"]), label='Test Loss')
+        plt.title(f'{rnn_layers} Layers with {rnn_dim} Dimensional Output - Loss Plot')
         plt.xlabel("Epoch")
         plt.ylabel("Loss")
         plt.legend()
-        plt.savefig(f"loss_{rnn_dim}_{rnn_layers}_{lr}.png")
+        plt.savefig(f"base_loss_{rnn_dim}_{rnn_layers}_{lr}.png")
         plt.clf()
 
-        plt.plot(np.array(xlabel), np.array(train_accs), label='Train Accuracy')
-        plt.plot(np.array(xlabel), np.array(test_accs), label='Test Accuracy')
-        plt.title('Accuracy Plot')
+        plt.plot(np.array(xlabel), np.array(model_d["train_accs"]), label='Train Accuracy')
+        plt.plot(np.array(xlabel), np.array(model_d["test_accs"]), label='Test Accuracy')
+        plt.title(f'{rnn_layers} Layers with {rnn_dim} Dimensional Output - Accuracy Plot')
         plt.xlabel("Epoch")
         plt.ylabel("Accuracy")
         plt.legend()
-        plt.savefig(f"accuracy_{rnn_dim}_{rnn_layers}_{lr}.png")
+        plt.savefig(f"base_accuracy_{rnn_dim}_{rnn_layers}_{lr}.png")
         plt.clf()
         
         model_d = {
@@ -290,7 +289,7 @@ def main():
         }
 
         # Save model
-        pickle.dump(model_d, open(f'model_{rnn_dim}_{rnn_layers}_{lr}.pkl', 'wb'))
+        pickle.dump(model_d, open(f'base_{rnn_dim}_{rnn_layers}_{lr}.pkl', 'wb'))
 
 if __name__ == "__main__":
     main()
